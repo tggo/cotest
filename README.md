@@ -49,6 +49,11 @@ Results are kept per hash, so reverting an edit does not re-run anything.
 The report is grouped per test file. Logs are in `.claude/battery/status/<level>/<pkg>.log`.
 The `integration` level switches on once a `*_test.go` has `//go:build integration`.
 
+Benchmarks may run directly: `go test -run '^$' -bench . ./pkg`.
+
+Coverage is measured from the commit where the session started (the first edit after a green Stop),
+so lines the agent commits mid-session are still checked.
+
 ## Settings
 
 `.claude/battery/battery.conf`, see [battery.conf.template](battery.conf.template): extra test flags
@@ -58,9 +63,9 @@ inputs such as migrations. The agent cannot edit this file: the guard blocks it.
 ## Limitations
 
 - Go only.
-- Coverage compares against `HEAD`; lines committed mid-session are not re-checked.
 - In a big repo, editing a package imported by everything costs minutes of background CPU.
-- The guard also blocks legitimate `go test -bench`. Add an allowlist to `guard.sh` if needed.
+- A flaky test is detected (failed tests are rerun once) but stays red; the agent is told which.
+- Database isolation needs your tests to use `BATTERY_RUN_ID` in the database name.
 - macOS bash 3.2 compatible; tested on macOS only.
 
 ## License

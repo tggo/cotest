@@ -23,6 +23,9 @@ BATTERY_JOBS=8
 
 # Environment for the test processes goes here too, e.g.:
 # export MONGO_URI=mongodb://localhost:27018
+# Every go test run gets BATTERY_RUN_ID (unique per run; the worker, ./test.sh and Stop can run at the
+# same time). Integration tests that share a database should put it into the database name, e.g.
+# "app_test_" + os.Getenv("BATTERY_RUN_ID") + "_" + package name, and drop it when done.
 
 # Levels to run. Empty = "unit lint", plus "integration" once a *_test.go has //go:build integration.
 BATTERY_LEVELS=""

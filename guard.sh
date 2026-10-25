@@ -13,8 +13,12 @@ fi
 # In commands the file name may stand alone ("> test.sh"), so no leading-slash anchor there.
 protected_cmd='\.claude/battery/(battery\.sh|guard\.sh|battery\.conf)|\.claude/settings\.json|test\.sh([^A-Za-z0-9_.-]|$)'
 if [ -n "$cmd" ]; then
-	if echo "$cmd" | grep -Eq '(^|[;&|[:space:]])go[[:space:]]+(test|vet)([[:space:]]|$)'; then
-		echo "Don't run go test/vet directly. Use ./test.sh [unit|lint|integration] [pkg|file_test.go] [-run X], or ./test.sh cover for changed lines no test executes. It reuses the result for the current files when the background battery already has one." >&2
+	# Benchmarks with tests switched off (-run '^$') verify nothing, so they may run directly.
+	bench_only=false
+	echo "$cmd" | grep -Eq -- '-bench[= ]' && echo "$cmd" | grep -Eq -- "-run[= ]+['\"]?\^\\\$['\"]?([[:space:]]|$)" &&
+		[ "$(echo "$cmd" | grep -Eo -- '-run[= ]' | wc -l)" -eq 1 ] && [ "$(echo "$cmd" | grep -Eo 'go[[:space:]]+(test|vet)' | wc -l)" -eq 1 ] && bench_only=true
+	if [ $bench_only = false ] && echo "$cmd" | grep -Eq '(^|[;&|[:space:]])go[[:space:]]+(test|vet)([[:space:]]|$)'; then
+		echo "Don't run go test/vet directly (benchmarks are fine as go test -run '^$' -bench X). Use ./test.sh [unit|lint|integration] [pkg|file_test.go] [-run X], or ./test.sh cover for changed lines no test executes. It reuses the result for the current files when the background battery already has one." >&2
 		exit 2
 	fi
 	# Only when a protected file is the TARGET of a write: redirected into, or an argument of a command

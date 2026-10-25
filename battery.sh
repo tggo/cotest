@@ -138,13 +138,20 @@ render() { # level importpath events-file
 	rm -f "$3.out"
 }
 
+# What "changed" is measured against. The first edit after a green Stop records HEAD as the session
+# base, so lines the agent commits mid-session are still checked. BATTERY_COVER_BASE overrides it for an audit.
+cover_base() {
+	local b; b=${BATTERY_COVER_BASE:-$(cat "$S/session.base" 2>/dev/null)}
+	if [ -n "$b" ] && git -C "$ROOT" merge-base --is-ancestor "$b" HEAD 2>/dev/null; then echo "$b"; else echo HEAD; fi
+}
+
 # A worker whose tree is no longer the newest was cancelled: what its killed processes report is noise.
 superseded() { [ "$1" = worker ] && [ "$(cat "$S/worker.tree" 2>/dev/null)" != "$TREE" ]; }
 
-# Packages that own a changed (vs HEAD) or untracked .go file, at one level.
+# Packages that own a changed (vs the session base) or untracked .go file, at one level.
 changed_pkgs() { # level
 	local d p all; all=" $(pkgs_of "$1") "
-	for d in $( { git -C "$ROOT" diff --name-only "${BATTERY_COVER_BASE:-HEAD}" -- '*.go'; git -C "$ROOT" ls-files -o --exclude-standard -- '*.go'; } | xargs -n1 dirname 2>/dev/null | sort -u); do
+	for d in $( { git -C "$ROOT" diff --name-only "$(cover_base)" -- '*.go'; git -C "$ROOT" ls-files -o --exclude-standard -- '*.go'; } | xargs -n1 dirname 2>/dev/null | sort -u); do
 		p="$MOD/$d"; [ "$d" = . ] && p=$MOD
 		case $all in *" $p "*) echo "$p" ;; esac
 	done
@@ -157,17 +164,23 @@ finalize() { # level run by pkg ok t0
 	{ echo "# level=$lvl package=$(rel "$p") run=${run:-all} hash=$h"
 	  echo "# finished=$(date '+%F %T') by=$by ok=$ok"
 	  render "$lvl" "$p" "$ev"; } > "$r.log"
-	# Same files, different outcome than last time: the test is flaky, not the change.
 	local prev flaky=false failed=""
+	[ "$lvl" != lint ] && failed=$(jq -r 'select(.Action=="fail" and .Test!=null and (.Test|contains("/")|not)) | .Test' "$ev" | paste -sd, -)
+	# A failed test that passes on an immediate rerun of the same files is flaky, not broken by the change.
+	# The result stays red: the agent is told which tests are flaky instead of chasing its own diff.
+	if [ "$ok" = false ] && [ -n "$failed" ] &&
+	   (cd "$ROOT" && BATTERY_RUN_ID="${lvl}_retry_$$" go test -count=1 $(tags_for "$lvl") ${BATTERY_TEST_FLAGS:-} -run "^(${failed//,/|})\$" "$p" > /dev/null 2>&1); then
+		flaky=true; echo "    FLAKY: ${failed//,/, } failed, then passed on an immediate rerun of the same files" >> "$r.log"
+	fi
+	# Same files, different outcome than an earlier run: also flaky.
 	prev=$(awk -v l="$lvl" -v p="$(rel "$p")" -v h="$h" -v r="${run:-}" 'index($0, "\"level\":\"" l "\"") && index($0, "\"pkg\":\"" p "\"") && index($0, "\"hash\":\"" h "\"") && index($0, "\"run\":\"" r "\"") {last=$0} END {print last}' "$S/runs.jsonl" 2>/dev/null)
-	if [ -n "$prev" ] && ! echo "$prev" | grep -q "\"ok\":$ok"; then
+	if [ "$flaky" = false ] && [ -n "$prev" ] && ! echo "$prev" | grep -q "\"ok\":$ok"; then
 		flaky=true; echo "    FLAKY: same files passed/failed differently on an earlier run" >> "$r.log"
 	fi
 	cp "$r.log" "$S/$lvl/$(key "$p" "$run").log"
 	# The package's own duration (go reports it); wall time since the batch started is a fallback.
 	local secs; secs=$( [ "$lvl" != lint ] && jq -rs '[.[]|select(.Test==null and .Elapsed!=null)]|last|.Elapsed // empty|floor' "$ev" 2>/dev/null)
 	[ -z "$secs" ] && secs=$(( $(date +%s) - t0 ))
-	[ "$lvl" != lint ] && failed=$(jq -r 'select(.Action=="fail" and .Test!=null and (.Test|contains("/")|not)) | .Test' "$ev" | paste -sd, -)
 	jq -cn --arg at "$(date '+%F %T')" --arg level "$lvl" --arg pkg "$(rel "$p")" --arg run "${run:-}" --arg hash "$h" \
 		--argjson ok "$ok" --arg by "$by" --argjson secs "$secs" --arg failed "$failed" --argjson flaky $flaky \
 		'{at:$at,level:$level,pkg:$pkg,run:$run,hash:$hash,ok:$ok,by:$by,secs:$secs,failed:($failed|split(",")|map(select(.!=""))),flaky:$flaky}' >> "$S/runs.jsonl"
@@ -197,7 +210,8 @@ run_batch() { # level run by pkg…
 		done
 		wait
 	else
-		(cd "$ROOT" && go test -json $(tags_for "$lvl") ${BATTERY_TEST_FLAGS:-} ${run:+-run "$run"} \
+		# Integration tests that share a database can namespace it by BATTERY_RUN_ID (unique per go test run).
+		(cd "$ROOT" && BATTERY_RUN_ID="${lvl}_$(date +%s)_$$" go test -json $(tags_for "$lvl") ${BATTERY_TEST_FLAGS:-} ${run:+-run "$run"} \
 			$([ "$lvl" = integration ] && echo -count=1) -coverprofile="$tmp/cover" "$@" 2> "$tmp/stderr") |
 		perl -MJSON::PP -e '
 			my ($dir) = @ARGV; $| = 1; my $js = JSON::PP->new->canonical;
@@ -235,11 +249,11 @@ run_batch() { # level run by pkg…
 	rm -rf "$tmp"
 }
 
-# Changed lines (working tree vs HEAD, or vs BATTERY_COVER_BASE for a manual audit of past commits, non-test .go files, untracked included) that sit inside a
+# Changed lines (working tree vs the session base, see cover_base; non-test .go files, untracked included) that sit inside a
 # statement block no test executed, at any level. Prints "file: a-b, c" per file; empty = all covered.
 uncovered_changes() {
 	local changes lv p f d profiles=""
-	changes=$( { git -C "$ROOT" diff -U0 "${BATTERY_COVER_BASE:-HEAD}" -- '*.go' ':(exclude)*_test.go' |
+	changes=$( { git -C "$ROOT" diff -U0 "$(cover_base)" -- '*.go' ':(exclude)*_test.go' |
 			awk '/^\+\+\+ b\// {f=substr($0, 7)} /^@@/ {split($3, a, ","); s=substr(a[1], 2); n=(a[2]=="")?1:a[2]; if(n>0) print f "\t" s "\t" s+n-1}'
 		git -C "$ROOT" ls-files -o --exclude-standard -- '*.go' | grep -v '_test\.go$' |
 			while read -r f; do echo "$f	1	$(wc -l < "$ROOT/$f")"; done; } |
@@ -298,6 +312,7 @@ kick)
 	gen=$(( $(cat "$S/gen" 2>/dev/null || echo 0) + 1 ))
 	echo $gen > "$S/gen"
 	touch "$S/pending"
+	[ -f "$S/session.base" ] || git -C "$ROOT" rev-parse -q --verify HEAD > "$S/session.base" 2>/dev/null || rm -f "$S/session.base"
 	# The hook runner waits for stdout/stderr to close, so detach every fd.
 	nohup "$0" worker $gen < /dev/null > /dev/null 2>&1 &
 	exit 0
@@ -323,7 +338,10 @@ worker)
 	log worker "gen=$my tree=${TREE:0:8} stale:$stale"
 	for l in $LEVELS; do
 		pk=""; for p in $(pkgs_of "$l"); do [ "$(state_of "$l" "$p" "")" = fresh ] || pk+=" $p"; done
-		[ -n "$pk" ] && run_batch "$l" "" worker $pk &
+		# Packages whose own files changed go first: Stop waits for them, the dependents can trail behind.
+		ch=" $(changed_pkgs "$l" | tr '\n' ' ') "; first=""; rest=""
+		for p in $pk; do case $ch in *" $p "*) first+=" $p" ;; *) rest+=" $p" ;; esac; done
+		[ -n "$pk" ] && { run_batch "$l" "" worker $first; superseded worker || run_batch "$l" "" worker $rest; } &
 	done
 	wait
 	rm -f "$S/worker.pid"
@@ -429,7 +447,7 @@ stop)
 			fi
 		fi
 	fi
-	echo 0 > "$S/attempts"
+	echo 0 > "$S/attempts"; rm -f "$S/session.base"
 	log stop "tree=${TREE:0:8} green"
 	exit 0
 	;;
