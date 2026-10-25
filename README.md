@@ -1,0 +1,68 @@
+# test-battery
+
+Background Go tests for Claude Code sessions. While the agent edits, hooks run the tests of the
+packages it touched. When the agent says "done", the result is usually ready, and the `Stop` hook
+does not let it finish while tests are red or its changed lines are not executed by any test.
+
+## Install
+
+```bash
+git clone https://github.com/tggo/test-battery
+test-battery/install.sh /path/to/your/go/repo
+```
+
+Requires git, go, jq, perl, python3 (macOS with Homebrew Go has them). The repo must be a git repo
+with a `go.mod`. Re-running the installer is safe. Restart Claude Code sessions in the repo afterwards.
+
+The installer:
+
+- copies `battery.sh` and `guard.sh` into `.claude/battery/`, creates `battery.conf` (keeps an existing one);
+- writes `./test.sh`, the only way to run tests;
+- merges three hooks into `.claude/settings.json`, keeping your other hooks;
+- adds `.claude/battery/status/` and the log to `.gitignore`;
+- adds a marked block with test rules to `CLAUDE.md`;
+- runs a self-check: first `./test.sh unit`, and confirms the guard blocks `go test`.
+
+## How it works
+
+| Hook | What it does |
+|---|---|
+| `PostToolUse` on `Write\|Edit\|MultiEdit\|Bash` | starts a detached worker, returns in milliseconds |
+| worker | waits 2 s of quiet, hashes every package, tests only stale ones (one `go test -json` per level) |
+| `PreToolUse` | blocks direct `go test`/`go vet`, and writes to the battery's own files |
+| `Stop` | every affected package green for the current files, and every changed line covered. Sends the agent back up to 3 times |
+
+The cache key of a package is a hash of its files plus its in-module dependencies (`go list -deps`
+and git trees, untracked files included). Edit one package and only it and its importers re-run.
+Results are kept per hash, so reverting an edit does not re-run anything.
+
+## Usage
+
+```bash
+./test.sh                          # everything, from cache where possible
+./test.sh unit ./internal/order/...
+./test.sh ./internal/order/store_test.go
+./test.sh integration ./internal/order -run TestCreate
+./test.sh cover                    # changed lines that no test executes
+```
+
+The report is grouped per test file. Logs are in `.claude/battery/status/<level>/<pkg>.log`.
+The `integration` level switches on once a `*_test.go` has `//go:build integration`.
+
+## Settings
+
+`.claude/battery/battery.conf`, see [battery.conf.template](battery.conf.template): extra test flags
+(`-race`), environment exports for tests, coverage mode `block|warn|off`, debounce, attempts, global
+inputs such as migrations. The agent cannot edit this file: the guard blocks it.
+
+## Limitations
+
+- Go only.
+- Coverage compares against `HEAD`; lines committed mid-session are not re-checked.
+- In a big repo, editing a package imported by everything costs minutes of background CPU.
+- The guard also blocks legitimate `go test -bench`. Add an allowlist to `guard.sh` if needed.
+- macOS bash 3.2 compatible; tested on macOS only.
+
+## License
+
+MIT

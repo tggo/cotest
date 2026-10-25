@@ -1,0 +1,37 @@
+# test-battery settings for this repo (sourced by .claude/battery/battery.sh).
+
+# Files or dirs outside Go packages that tests read (migrations, fixtures, compose files).
+# A change in any of them re-runs every package. go.mod and go.sum are always included.
+BATTERY_GLOBAL=""
+
+# Extra flags for every go test run, e.g. "-race -timeout 10m".
+BATTERY_TEST_FLAGS=""
+
+# Changed lines must be executed by some test: block (Stop sends the agent back), warn (log only), off.
+BATTERY_COVER=block
+
+# Globs of files whose changes are exempt from the coverage check (wiring that only runs in prod).
+# Generated files ("Code generated ... DO NOT EDIT") are always exempt.
+BATTERY_COVER_IGNORE=""
+
+# What Stop waits for at the integration level: "changed" (packages whose own files changed; the
+# worker still tests dependents in the background) or "all" (every package that could be affected).
+BATTERY_STOP_INTEGRATION=changed
+
+# Parallel go vet processes.
+BATTERY_JOBS=8
+
+# Environment for the test processes goes here too, e.g.:
+# export MONGO_URI=mongodb://localhost:27018
+
+# Levels to run. Empty = "unit lint", plus "integration" once a *_test.go has //go:build integration.
+BATTERY_LEVELS=""
+
+# Seconds of quiet after the last edit before the background run starts.
+BATTERY_DEBOUNCE=2
+
+# How many times Stop sends the agent back on red before handing over to the human.
+BATTERY_MAX_ATTEMPTS=3
+
+# Results kept per package (older file states are pruned).
+BATTERY_KEEP=20
