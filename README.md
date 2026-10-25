@@ -1,4 +1,4 @@
-# test-battery
+# cotest
 
 Background Go tests for Claude Code sessions. While the agent edits, hooks run the tests of the
 packages it touched. When the agent says "done", the result is usually ready, and the `Stop` hook
@@ -7,8 +7,8 @@ does not let it finish while tests are red or its changed lines are not executed
 ## Install
 
 ```bash
-git clone https://github.com/tggo/test-battery
-test-battery/install.sh /path/to/your/go/repo
+git clone https://github.com/tggo/cotest
+cotest/install.sh /path/to/your/go/repo
 ```
 
 Requires git, go, jq, perl, python3 (macOS with Homebrew Go has them). The repo must be a git repo

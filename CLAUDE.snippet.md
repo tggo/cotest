@@ -1,5 +1,5 @@
-<!-- test-battery:start -->
-## Tests (test-battery)
+<!-- cotest:start -->
+## Tests (cotest)
 - Tests run automatically in the background after every edit, and are checked again when you finish
   (Stop hook). Only packages whose files, or in-module dependencies, changed are re-run. The Stop check
   also covers packages that import what you changed.
@@ -20,4 +20,4 @@
   history: `.claude/battery/status/runs.jsonl`.
 - Integration tests carry `//go:build integration` and live next to the code they test.
 - Do not call `go test` or `go vet` directly; a hook blocks it.
-<!-- test-battery:end -->
+<!-- cotest:end -->

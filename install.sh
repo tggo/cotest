@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Install test-battery into a Go repo.
+# Install cotest into a Go repo.
 #   install.sh <project-dir>
 # Idempotent: re-running updates the scripts and hooks, keeps an existing battery.conf and CLAUDE.md block.
 set -euo pipefail
 
 KIT="$(cd "$(dirname "$0")" && pwd)"
 DIR="$(cd "${1:?usage: install.sh <project-dir>}" && pwd)"
-[ -f "$DIR/go.mod" ] || { echo "no go.mod in $DIR (test-battery is Go-only)" >&2; exit 1; }
+[ -f "$DIR/go.mod" ] || { echo "no go.mod in $DIR (cotest is Go-only)" >&2; exit 1; }
 [ -d "$DIR/.git" ] || { echo "$DIR is not a git repo (the cache keys on git trees)" >&2; exit 1; }
 for t in jq perl git go; do command -v $t >/dev/null || { echo "missing $t" >&2; exit 1; }; done
 
@@ -49,12 +49,12 @@ for line in ".claude/battery/status/" ".claude/battery/battery.log"; do
 done
 
 # 4. CLAUDE.md rule (replace our block if present, so wording updates reach old installs)
-if grep -q '<!-- test-battery:start -->' "$DIR/CLAUDE.md" 2>/dev/null; then
+if grep -Eq '<!-- (test-battery|cotest):start -->' "$DIR/CLAUDE.md" 2>/dev/null; then
 	python3 - "$DIR/CLAUDE.md" "$KIT/CLAUDE.snippet.md" <<'PY'
 import re, sys
 p, snip = sys.argv[1], open(sys.argv[2]).read().strip()
 s = open(p).read()
-s = re.sub(r"<!-- test-battery:start -->.*?<!-- test-battery:end -->", lambda m: snip, s, flags=re.S)
+s = re.sub(r"<!-- (?:test-battery|cotest):start -->.*?<!-- (?:test-battery|cotest):end -->", lambda m: snip, s, flags=re.S)
 open(p, "w").write(s)
 PY
 	echo "update  CLAUDE.md (test-battery block)"
@@ -65,11 +65,11 @@ fi
 
 # 5. self-check: the battery must hash, run and report on this repo
 echo "check   ./test.sh unit (first run, fills the cache)"
-if (cd "$DIR" && CLAUDE_PROJECT_DIR="$DIR" ./test.sh unit > /tmp/test-battery-install.$$ 2>&1); then
-	grep -E '^(PASS|FAIL)' /tmp/test-battery-install.$$ | sed 's/^/        /'
+if (cd "$DIR" && CLAUDE_PROJECT_DIR="$DIR" ./test.sh unit > /tmp/cotest-install.$$ 2>&1); then
+	grep -E '^(PASS|FAIL)' /tmp/cotest-install.$$ | sed 's/^/        /'
 else
-	sed 's/^/        /' /tmp/test-battery-install.$$; echo "unit tests are red in $DIR; the battery works, the code does not" >&2
+	sed 's/^/        /' /tmp/cotest-install.$$; echo "unit tests are red in $DIR; cotest works, the code does not" >&2
 fi
-rm -f /tmp/test-battery-install.$$
+rm -f /tmp/cotest-install.$$
 echo '{"tool_input":{"command":"go test ./..."}}' | "$DIR/.claude/battery/guard.sh" 2>/dev/null && { echo "guard did not block go test" >&2; exit 1; } || echo "check   guard blocks direct go test"
 echo "done. Restart Claude sessions in $DIR so they load the hooks."

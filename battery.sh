@@ -1,5 +1,5 @@
 #!/bin/bash
-# Background test battery with a per-package cache.
+# Background continuous testing (cotest) with a per-package cache.
 #   battery.sh kick                 PostToolUse: bump generation, spawn a worker, return at once
 #   battery.sh worker GEN           debounce, find packages whose inputs changed, test only those
 #   battery.sh test [LEVEL] [PATH…] [-run RE]   the one way to run tests (see test.sh)
@@ -432,7 +432,7 @@ stop)
 	if [ -n "$fail" ]; then
 		echo $(( attempts + 1 )) > "$S/attempts"; echo "$TREE" > "$S/red.tree"
 		log stop "tree=${TREE:0:8} RED (attempt $(( attempts + 1 )))"
-		printf 'Test battery is red for the current files:%s\n\nRe-check one file with ./test.sh path/to/x_test.go\n' "$fail" >&2
+		printf 'cotest: tests are red for the current files:%s\n\nRe-check one file with ./test.sh path/to/x_test.go\n' "$fail" >&2
 		exit 2
 	fi
 	# Green is not enough: code you changed must be executed by some test.
