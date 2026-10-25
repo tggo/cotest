@@ -1,14 +1,14 @@
 #!/bin/bash
 # Background continuous testing (cotest) with a per-package cache.
-#   battery.sh kick                 PostToolUse: bump generation, spawn a worker, return at once
-#   battery.sh worker GEN           debounce, find packages whose inputs changed, test only those
-#   battery.sh test [LEVEL] [PATH…] [-run RE]   the one way to run tests (see test.sh)
-#   battery.sh stop                 Stop hook: every package at every level must be green for the current files
+#   cotest.sh kick                 PostToolUse: bump generation, spawn a worker, return at once
+#   cotest.sh worker GEN           debounce, find packages whose inputs changed, test only those
+#   cotest.sh test [LEVEL] [PATH…] [-run RE]   the one way to run tests (see test.sh)
+#   cotest.sh stop                 Stop hook: every package at every level must be green for the current files
 #
 # A result is cached per (level, package, -run filter) under the hash of the package's own files plus
 # every in-module package it depends on (with that level's build tags), plus go.mod/go.sum. Editing one
 # domain therefore leaves the cache of an unrelated domain valid. Files in non-package subdirectories
-# (testdata/, embedded assets) count for the package that encloses them. Paths in BATTERY_GLOBAL
+# (testdata/, embedded assets) count for the package that encloses them. Paths in COTEST_GLOBAL
 # (space-separated files or dirs, e.g. "migrations docker-compose.yml") count for every package.
 #
 # Results are kept per hash in status/<level>/<key>/<hash>.{st,log}, so reverting an edit finds the old
@@ -19,20 +19,20 @@
 set -u
 ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"
 ROOT=$(cd -P "$ROOT" && pwd) # ~/code is a symlink; go list and git must see the same paths
-B="$ROOT/.claude/battery"
+B="$ROOT/.claude/cotest"
 S="$B/status"
 mkdir -p "$S"
-# Per-project settings (BATTERY_GLOBAL, BATTERY_LEVELS, …) live next to this script.
-[ -f "$B/battery.conf" ] && . "$B/battery.conf"
-DEBOUNCE="${BATTERY_DEBOUNCE:-2}"
-MAX_ATTEMPTS="${BATTERY_MAX_ATTEMPTS:-3}"
+# Per-project settings (COTEST_GLOBAL, COTEST_LEVELS, …) live next to this script.
+[ -f "$B/cotest.conf" ] && . "$B/cotest.conf"
+DEBOUNCE="${COTEST_DEBOUNCE:-2}"
+MAX_ATTEMPTS="${COTEST_MAX_ATTEMPTS:-3}"
 # The integration level only exists once some test file carries the tag; until then it would just repeat unit.
-if [ -n "${BATTERY_LEVELS:-}" ]; then LEVELS=$BATTERY_LEVELS
+if [ -n "${COTEST_LEVELS:-}" ]; then LEVELS=$COTEST_LEVELS
 elif git -C "$ROOT" grep --untracked -qlE '^//go:build .*integration' -- '*_test.go' 2>/dev/null; then LEVELS="unit lint integration"
 else LEVELS="unit lint"; fi
 MOD=$(awk '/^module /{print $2; exit}' "$ROOT/go.mod")
 
-log() { echo "$(perl -MTime::HiRes=time -MPOSIX=strftime -e '$t=time; printf "%s.%03d", strftime("%H:%M:%S",localtime $t), ($t-int $t)*1000') [$1] ${*:2}" >> "$B/battery.log"; }
+log() { echo "$(perl -MTime::HiRes=time -MPOSIX=strftime -e '$t=time; printf "%s.%03d", strftime("%H:%M:%S",localtime $t), ($t-int $t)*1000') [$1] ${*:2}" >> "$B/cotest.log"; }
 
 tags_for() { [ "$1" = integration ] && echo "-tags integration"; }
 rel() { local r=${1#$MOD}; r=${r#/}; echo "${r:-.}"; } # import path -> path relative to module
@@ -43,7 +43,7 @@ worker_alive() { [ -f "$S/worker.pid" ] && kill -0 "$(cat "$S/worker.pid")" 2>/d
 tree_hash() {
 	local idx; idx=$(mktemp)
 	cp "$ROOT/.git/index" "$idx" 2>/dev/null
-	GIT_INDEX_FILE="$idx" git -C "$ROOT" add -A -- . ':!.claude/battery' >/dev/null 2>&1
+	GIT_INDEX_FILE="$idx" git -C "$ROOT" add -A -- . ':!.claude/cotest' >/dev/null 2>&1
 	GIT_INDEX_FILE="$idx" git -C "$ROOT" write-tree
 	rm -f "$idx"
 }
@@ -57,7 +57,7 @@ load_hashes() { # level…
 		q=$lvl; [ "$lvl" = lint ] && q=unit # vet sees the same files as unit tests
 		out=$(cd "$ROOT" && go list $(tags_for "$q") -test -deps \
 			-f '{{if not .Standard}}{{.ImportPath}}	{{.Dir}}	{{.ForTest}}	{{join .Deps " "}}{{end}}' ./... 2>/dev/null |
-			awk -F'\t' -v root="$ROOT" -v lst="$lst" -v global="go.mod go.sum ${BATTERY_GLOBAL:-}" '
+			awk -F'\t' -v root="$ROOT" -v lst="$lst" -v global="go.mod go.sum ${COTEST_GLOBAL:-}" '
 				BEGIN { ng=split(global, G, " ")
 				        while((getline line < lst) > 0){ split(line, a, "\t"); split(a[1], m, " ")
 				          nb++; BP[nb]=a[2]; BH[nb]=m[3]
@@ -103,7 +103,7 @@ state_of() { # level pkg run -> "fresh" | "running" | "stale"
 	[ -f "$f" ] || { echo stale; return; }
 	read -r h st rest < "$f"
 	[ "$h" = "$(scope_hash "$1" "$2")" ] || { echo stale; return; }
-	# A test result without its coverage slice (from an older battery) cannot answer the coverage check.
+	# A test result without its coverage slice (from an older version) cannot answer the coverage check.
 	if [ "$st" = done ] && [ -z "$3" ] && [ "$1" != lint ] && [ ! -f "${f%.st}.cover" ]; then echo stale; return; fi
 	[ "$st" = done ] && echo fresh || echo running
 }
@@ -139,9 +139,9 @@ render() { # level importpath events-file
 }
 
 # What "changed" is measured against. The first edit after a green Stop records HEAD as the session
-# base, so lines the agent commits mid-session are still checked. BATTERY_COVER_BASE overrides it for an audit.
+# base, so lines the agent commits mid-session are still checked. COTEST_COVER_BASE overrides it for an audit.
 cover_base() {
-	local b; b=${BATTERY_COVER_BASE:-$(cat "$S/session.base" 2>/dev/null)}
+	local b; b=${COTEST_COVER_BASE:-$(cat "$S/session.base" 2>/dev/null)}
 	if [ -n "$b" ] && git -C "$ROOT" merge-base --is-ancestor "$b" HEAD 2>/dev/null; then echo "$b"; else echo HEAD; fi
 }
 
@@ -169,7 +169,7 @@ finalize() { # level run by pkg ok t0
 	# A failed test that passes on an immediate rerun of the same files is flaky, not broken by the change.
 	# The result stays red: the agent is told which tests are flaky instead of chasing its own diff.
 	if [ "$ok" = false ] && [ -n "$failed" ] &&
-	   (cd "$ROOT" && BATTERY_RUN_ID="${lvl}_retry_$$" go test -count=1 $(tags_for "$lvl") ${BATTERY_TEST_FLAGS:-} -run "^(${failed//,/|})\$" "$p" > /dev/null 2>&1); then
+	   (cd "$ROOT" && COTEST_RUN_ID="${lvl}_retry_$$" go test -count=1 $(tags_for "$lvl") ${COTEST_TEST_FLAGS:-} -run "^(${failed//,/|})\$" "$p" > /dev/null 2>&1); then
 		flaky=true; echo "    FLAKY: ${failed//,/, } failed, then passed on an immediate rerun of the same files" >> "$r.log"
 	fi
 	# Same files, different outcome than an earlier run: also flaky.
@@ -186,7 +186,7 @@ finalize() { # level run by pkg ok t0
 		'{at:$at,level:$level,pkg:$pkg,run:$run,hash:$hash,ok:$ok,by:$by,secs:$secs,failed:($failed|split(",")|map(select(.!=""))),flaky:$flaky}' >> "$S/runs.jsonl"
 	echo "$h done $ok $by $secs" > "$r.st.tmp" && mv "$r.st.tmp" "$r.st"
 	# Keep the newest results per package; older trees are unlikely to come back.
-	ls -t "$(dirname "$r")"/*.st 2>/dev/null | tail -n +"$(( ${BATTERY_KEEP:-20} + 1 ))" | sed 's/\.st$//' |
+	ls -t "$(dirname "$r")"/*.st 2>/dev/null | tail -n +"$(( ${COTEST_KEEP:-20} + 1 ))" | sed 's/\.st$//' |
 		while read -r old; do rm -f "$old".st "$old".log "$old".events "$old".cover; done
 	log "$lvl" "$(rel "$p")${run:+ -run $run} ok=$([ "$ok" = true ] && echo yes || echo NO) by=$by ${secs}s"
 }
@@ -200,18 +200,18 @@ run_batch() { # level run by pkg…
 	t0=$(date +%s); tmp=$(mktemp -d)
 	for p in "$@"; do r=$(res "$lvl" "$p" "$run"); mkdir -p "$(dirname "$r")"; echo "$(scope_hash "$lvl" "$p") running - $by 0" > "$r.st"; done
 	if [ "$lvl" = lint ]; then
-		# vet per package, capped at BATTERY_JOBS at a time
+		# vet per package, capped at COTEST_JOBS at a time
 		local n=0
 		for p in "$@"; do
 			( r=$(res "$lvl" "$p" "$run")
 			  (cd "$ROOT" && go vet "$p" > "$r.events" 2>&1) && ok=true || ok=false
 			  superseded "$by" || finalize "$lvl" "$run" "$by" "$p" "$ok" "$t0" ) &
-			n=$((n + 1)); [ $((n % ${BATTERY_JOBS:-8})) = 0 ] && wait
+			n=$((n + 1)); [ $((n % ${COTEST_JOBS:-8})) = 0 ] && wait
 		done
 		wait
 	else
-		# Integration tests that share a database can namespace it by BATTERY_RUN_ID (unique per go test run).
-		(cd "$ROOT" && BATTERY_RUN_ID="${lvl}_$(date +%s)_$$" go test -json $(tags_for "$lvl") ${BATTERY_TEST_FLAGS:-} ${run:+-run "$run"} \
+		# Integration tests that share a database can namespace it by COTEST_RUN_ID (unique per go test run).
+		(cd "$ROOT" && COTEST_RUN_ID="${lvl}_$(date +%s)_$$" go test -json $(tags_for "$lvl") ${COTEST_TEST_FLAGS:-} ${run:+-run "$run"} \
 			$([ "$lvl" = integration ] && echo -count=1) -coverprofile="$tmp/cover" "$@" 2> "$tmp/stderr") |
 		perl -MJSON::PP -e '
 			my ($dir) = @ARGV; $| = 1; my $js = JSON::PP->new->canonical;
@@ -259,7 +259,7 @@ uncovered_changes() {
 			while read -r f; do echo "$f	1	$(wc -l < "$ROOT/$f")"; done; } |
 		while IFS=$'\t' read -r f a b; do
 			head -3 "$ROOT/$f" 2>/dev/null | grep -q 'Code generated .* DO NOT EDIT' && continue
-			for g in ${BATTERY_COVER_IGNORE:-}; do case $f in ($g) continue 2 ;; esac; done
+			for g in ${COTEST_COVER_IGNORE:-}; do case $f in ($g) continue 2 ;; esac; done
 			echo "$f	$a	$b"
 		done)
 	[ -z "$changes" ] && return
@@ -391,7 +391,7 @@ test)
 			read -r h st ok by secs < "$f.st"
 			case $before in *" $p "*) how=cached ;; *) [ "$by" = test ] && how=ran || how=waited ;; esac
 			printf '%s %s  (%s, hash %s)  log: %s\n' "$([ "$ok" = true ] && echo PASS || echo FAIL)" "$(rel "$p")" \
-				"$how" "${h:0:8}" ".claude/battery/status/$l/$(key "$p" "$run").log"
+				"$how" "${h:0:8}" ".claude/cotest/status/$l/$(key "$p" "$run").log"
 			tail -n +3 "$f.log"
 			[ "$ok" = true ] || rc=1
 		done
@@ -406,7 +406,7 @@ stop)
 	attempts=$(cat "$S/attempts" 2>/dev/null || echo 0)
 	if [ "$active" = true ] && [ "$attempts" -ge "$MAX_ATTEMPTS" ]; then
 		log stop "gave up after $attempts attempts"; echo 0 > "$S/attempts"
-		echo "battery: still red after $attempts attempts, handing back to the human" >&2
+		echo "cotest: still red after $attempts attempts, handing back to the human" >&2
 		exit 0
 	fi
 	# Stopped again without changing anything: the agent is asking the human, not ignoring us.
@@ -420,7 +420,7 @@ stop)
 		pkgs=$(pkgs_of "$l")
 		# Integration tests of every dependent can take minutes after a change to a leaf package; by
 		# default Stop waits only for the packages you changed (the worker still runs the rest).
-		[ "$l" = integration ] && [ "${BATTERY_STOP_INTEGRATION:-changed}" = changed ] && pkgs=$(changed_pkgs integration)
+		[ "$l" = integration ] && [ "${COTEST_STOP_INTEGRATION:-changed}" = changed ] && pkgs=$(changed_pkgs integration)
 		[ -z "$pkgs" ] && continue
 		ensure "$l" "" stop $pkgs
 		for p in $pkgs; do
@@ -436,13 +436,13 @@ stop)
 		exit 2
 	fi
 	# Green is not enough: code you changed must be executed by some test.
-	if [ "${BATTERY_COVER:-block}" != off ]; then
+	if [ "${COTEST_COVER:-block}" != off ]; then
 		unc=$(uncovered_changes)
 		if [ -n "$unc" ]; then
 			log stop "tree=${TREE:0:8} uncovered changes: $(echo "$unc" | tr '\n' ';')"
-			if [ "${BATTERY_COVER:-block}" = block ]; then
+			if [ "${COTEST_COVER:-block}" = block ]; then
 				echo $(( attempts + 1 )) > "$S/attempts"; echo "$TREE" > "$S/red.tree"
-				printf 'Tests are green, but these lines you changed are not executed by any test:\n%s\n\nAdd tests that run them (./test.sh cover shows what is still uncovered). If a line truly cannot be tested, stop and tell the human why; do not edit the battery settings.\n' "$(echo "$unc" | sed 's/^/  /')" >&2
+				printf 'Tests are green, but these lines you changed are not executed by any test:\n%s\n\nAdd tests that run them (./test.sh cover shows what is still uncovered). If a line truly cannot be tested, stop and tell the human why; do not edit the cotest settings.\n' "$(echo "$unc" | sed 's/^/  /')" >&2
 				exit 2
 			fi
 		fi

@@ -1,40 +1,40 @@
-# cotest settings for this repo (sourced by .claude/battery/battery.sh).
+# cotest settings for this repo (sourced by .claude/cotest/cotest.sh).
 
 # Files or dirs outside Go packages that tests read (migrations, fixtures, compose files).
 # A change in any of them re-runs every package. go.mod and go.sum are always included.
-BATTERY_GLOBAL=""
+COTEST_GLOBAL=""
 
 # Extra flags for every go test run, e.g. "-race -timeout 10m".
-BATTERY_TEST_FLAGS=""
+COTEST_TEST_FLAGS=""
 
 # Changed lines must be executed by some test: block (Stop sends the agent back), warn (log only), off.
-BATTERY_COVER=block
+COTEST_COVER=block
 
 # Globs of files whose changes are exempt from the coverage check (wiring that only runs in prod).
 # Generated files ("Code generated ... DO NOT EDIT") are always exempt.
-BATTERY_COVER_IGNORE=""
+COTEST_COVER_IGNORE=""
 
 # What Stop waits for at the integration level: "changed" (packages whose own files changed; the
 # worker still tests dependents in the background) or "all" (every package that could be affected).
-BATTERY_STOP_INTEGRATION=changed
+COTEST_STOP_INTEGRATION=changed
 
 # Parallel go vet processes.
-BATTERY_JOBS=8
+COTEST_JOBS=8
 
 # Environment for the test processes goes here too, e.g.:
 # export MONGO_URI=mongodb://localhost:27018
-# Every go test run gets BATTERY_RUN_ID (unique per run; the worker, ./test.sh and Stop can run at the
+# Every go test run gets COTEST_RUN_ID (unique per run; the worker, ./test.sh and Stop can run at the
 # same time). Integration tests that share a database should put it into the database name, e.g.
-# "app_test_" + os.Getenv("BATTERY_RUN_ID") + "_" + package name, and drop it when done.
+# "app_test_" + os.Getenv("COTEST_RUN_ID") + "_" + package name, and drop it when done.
 
 # Levels to run. Empty = "unit lint", plus "integration" once a *_test.go has //go:build integration.
-BATTERY_LEVELS=""
+COTEST_LEVELS=""
 
 # Seconds of quiet after the last edit before the background run starts.
-BATTERY_DEBOUNCE=2
+COTEST_DEBOUNCE=2
 
 # How many times Stop sends the agent back on red before handing over to the human.
-BATTERY_MAX_ATTEMPTS=3
+COTEST_MAX_ATTEMPTS=3
 
 # Results kept per package (older file states are pruned).
-BATTERY_KEEP=20
+COTEST_KEEP=20

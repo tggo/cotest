@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install cotest into a Go repo.
 #   install.sh <project-dir>
-# Idempotent: re-running updates the scripts and hooks, keeps an existing battery.conf and CLAUDE.md block.
+# Idempotent: re-running updates the scripts and hooks, keeps an existing cotest.conf and CLAUDE.md block.
 set -euo pipefail
 
 KIT="$(cd "$(dirname "$0")" && pwd)"
@@ -10,15 +10,32 @@ DIR="$(cd "${1:?usage: install.sh <project-dir>}" && pwd)"
 [ -d "$DIR/.git" ] || { echo "$DIR is not a git repo (the cache keys on git trees)" >&2; exit 1; }
 for t in jq perl git go; do command -v $t >/dev/null || { echo "missing $t" >&2; exit 1; }; done
 
+# 0. migrate an install from the test-battery days: .claude/battery -> .claude/cotest, BATTERY_* -> COTEST_*
+OLD="$DIR/.claude/battery"
+if [ -d "$OLD" ]; then
+	mkdir -p "$DIR/.claude/cotest"
+	if [ -f "$OLD/battery.conf" ] && [ ! -f "$DIR/.claude/cotest/cotest.conf" ]; then
+		sed 's/BATTERY_/COTEST_/g; s/test-battery/cotest/g; s|\.claude/battery/battery\.sh|.claude/cotest/cotest.sh|g' "$OLD/battery.conf" > "$DIR/.claude/cotest/cotest.conf"
+		echo "migrate .claude/battery/battery.conf -> .claude/cotest/cotest.conf"
+	fi
+	[ -d "$OLD/status" ] && [ ! -d "$DIR/.claude/cotest/status" ] && mv "$OLD/status" "$DIR/.claude/cotest/status"
+	git -C "$DIR" rm -rq --cached --ignore-unmatch .claude/battery >/dev/null
+	rm -rf "$OLD"; echo "remove  .claude/battery"
+	if [ -f "$DIR/.gitignore" ]; then
+		grep -vxF -e ".claude/battery/status/" -e ".claude/battery/battery.log" "$DIR/.gitignore" > "$DIR/.gitignore.tmp" || true
+		cat "$DIR/.gitignore.tmp" > "$DIR/.gitignore"; rm -f "$DIR/.gitignore.tmp"
+	fi
+fi
+
 # 1. scripts
-mkdir -p "$DIR/.claude/battery"
-cp "$KIT/battery.sh" "$KIT/guard.sh" "$DIR/.claude/battery/"
-chmod +x "$DIR/.claude/battery/battery.sh" "$DIR/.claude/battery/guard.sh"
-echo "write   .claude/battery/battery.sh, guard.sh"
-if [ -f "$DIR/.claude/battery/battery.conf" ]; then echo "keep    .claude/battery/battery.conf"
-else cp "$KIT/battery.conf.template" "$DIR/.claude/battery/battery.conf"; echo "create  .claude/battery/battery.conf"; fi
-if [ -e "$DIR/test.sh" ] && ! grep -q 'battery.sh" test' "$DIR/test.sh"; then
-	echo "test.sh exists and is not ours; leaving it, entrypoint is .claude/battery/battery.sh test" >&2
+mkdir -p "$DIR/.claude/cotest"
+cp "$KIT/cotest.sh" "$KIT/guard.sh" "$DIR/.claude/cotest/"
+chmod +x "$DIR/.claude/cotest/cotest.sh" "$DIR/.claude/cotest/guard.sh"
+echo "write   .claude/cotest/cotest.sh, guard.sh"
+if [ -f "$DIR/.claude/cotest/cotest.conf" ]; then echo "keep    .claude/cotest/cotest.conf"
+else cp "$KIT/cotest.conf.template" "$DIR/.claude/cotest/cotest.conf"; echo "create  .claude/cotest/cotest.conf"; fi
+if [ -e "$DIR/test.sh" ] && ! grep -Eq '(battery|cotest)\.sh" test' "$DIR/test.sh"; then
+	echo "test.sh exists and is not ours; leaving it, entrypoint is .claude/cotest/cotest.sh test" >&2
 else cp "$KIT/test.sh" "$DIR/test.sh"; chmod +x "$DIR/test.sh"; echo "write   test.sh"; fi
 
 # 2. hooks, merged into .claude/settings.json (other hooks are kept)
@@ -28,13 +45,13 @@ path = sys.argv[1]
 s = json.load(open(path)) if os.path.exists(path) else {}
 hooks = s.setdefault("hooks", {})
 want = {
-    "PostToolUse": ("Write|Edit|MultiEdit|Bash", '"$CLAUDE_PROJECT_DIR"/.claude/battery/battery.sh kick', 5),
-    "PreToolUse":  ("Bash|Write|Edit|MultiEdit", '"$CLAUDE_PROJECT_DIR"/.claude/battery/guard.sh', 5),
-    "Stop":        (None, '"$CLAUDE_PROJECT_DIR"/.claude/battery/battery.sh stop', 300),
+    "PostToolUse": ("Write|Edit|MultiEdit|Bash", '"$CLAUDE_PROJECT_DIR"/.claude/cotest/cotest.sh kick', 5),
+    "PreToolUse":  ("Bash|Write|Edit|MultiEdit", '"$CLAUDE_PROJECT_DIR"/.claude/cotest/guard.sh', 5),
+    "Stop":        (None, '"$CLAUDE_PROJECT_DIR"/.claude/cotest/cotest.sh stop', 300),
 }
 for event, (matcher, cmd, timeout) in want.items():
     groups = hooks.setdefault(event, [])
-    groups[:] = [g for g in groups if not any(".claude/battery/" in h.get("command", "") for h in g.get("hooks", []))]
+    groups[:] = [g for g in groups if not any(d in h.get("command", "") for d in (".claude/cotest/", ".claude/battery/") for h in g.get("hooks", []))]
     g = {"hooks": [{"type": "command", "command": cmd, "timeout": timeout}]}
     if matcher: g = {"matcher": matcher, **g}
     groups.append(g)
@@ -44,7 +61,7 @@ print("merge   .claude/settings.json")
 PY
 
 # 3. results stay out of git
-for line in ".claude/battery/status/" ".claude/battery/battery.log"; do
+for line in ".claude/cotest/status/" ".claude/cotest/cotest.log"; do
 	grep -qxF "$line" "$DIR/.gitignore" 2>/dev/null || { echo "$line" >> "$DIR/.gitignore"; echo "append  .gitignore: $line"; }
 done
 
@@ -63,7 +80,7 @@ else
 	echo "append  CLAUDE.md"
 fi
 
-# 5. self-check: the battery must hash, run and report on this repo
+# 5. self-check: cotest must hash, run and report on this repo
 echo "check   ./test.sh unit (first run, fills the cache)"
 if (cd "$DIR" && CLAUDE_PROJECT_DIR="$DIR" ./test.sh unit > /tmp/cotest-install.$$ 2>&1); then
 	grep -E '^(PASS|FAIL)' /tmp/cotest-install.$$ | sed 's/^/        /'
@@ -71,5 +88,5 @@ else
 	sed 's/^/        /' /tmp/cotest-install.$$; echo "unit tests are red in $DIR; cotest works, the code does not" >&2
 fi
 rm -f /tmp/cotest-install.$$
-echo '{"tool_input":{"command":"go test ./..."}}' | "$DIR/.claude/battery/guard.sh" 2>/dev/null && { echo "guard did not block go test" >&2; exit 1; } || echo "check   guard blocks direct go test"
+echo '{"tool_input":{"command":"go test ./..."}}' | "$DIR/.claude/cotest/guard.sh" 2>/dev/null && { echo "guard did not block go test" >&2; exit 1; } || echo "check   guard blocks direct go test"
 echo "done. Restart Claude sessions in $DIR so they load the hooks."

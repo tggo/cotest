@@ -16,10 +16,10 @@ with a `go.mod`. Re-running the installer is safe. Restart Claude Code sessions 
 
 The installer:
 
-- copies `battery.sh` and `guard.sh` into `.claude/battery/`, creates `battery.conf` (keeps an existing one);
+- copies `cotest.sh` and `guard.sh` into `.claude/cotest/`, creates `cotest.conf` (keeps an existing one);
 - writes `./test.sh`, the only way to run tests;
 - merges three hooks into `.claude/settings.json`, keeping your other hooks;
-- adds `.claude/battery/status/` and the log to `.gitignore`;
+- adds `.claude/cotest/status/` and the log to `.gitignore`;
 - adds a marked block with test rules to `CLAUDE.md`;
 - runs a self-check: first `./test.sh unit`, and confirms the guard blocks `go test`.
 
@@ -46,7 +46,7 @@ Results are kept per hash, so reverting an edit does not re-run anything.
 ./test.sh cover                    # changed lines that no test executes
 ```
 
-The report is grouped per test file. Logs are in `.claude/battery/status/<level>/<pkg>.log`.
+The report is grouped per test file. Logs are in `.claude/cotest/status/<level>/<pkg>.log`.
 The `integration` level switches on once a `*_test.go` has `//go:build integration`.
 
 Benchmarks may run directly: `go test -run '^$' -bench . ./pkg`.
@@ -56,7 +56,7 @@ so lines the agent commits mid-session are still checked.
 
 ## Settings
 
-`.claude/battery/battery.conf`, see [battery.conf.template](battery.conf.template): extra test flags
+`.claude/cotest/cotest.conf`, see [cotest.conf.template](cotest.conf.template): extra test flags
 (`-race`), environment exports for tests, coverage mode `block|warn|off`, debounce, attempts, global
 inputs such as migrations. The agent cannot edit this file: the guard blocks it.
 
@@ -65,7 +65,7 @@ inputs such as migrations. The agent cannot edit this file: the guard blocks it.
 - Go only.
 - In a big repo, editing a package imported by everything costs minutes of background CPU.
 - A flaky test is detected (failed tests are rerun once) but stays red; the agent is told which.
-- Database isolation needs your tests to use `BATTERY_RUN_ID` in the database name.
+- Database isolation needs your tests to use `COTEST_RUN_ID` in the database name.
 - macOS bash 3.2 compatible; tested on macOS only.
 
 ## License
