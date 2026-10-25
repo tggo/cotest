@@ -1,4 +1,4 @@
-# test-battery settings for this repo (sourced by .claude/battery/battery.sh).
+# cotest settings for this repo (sourced by .claude/battery/battery.sh).
 
 # Files or dirs outside Go packages that tests read (migrations, fixtures, compose files).
 # A change in any of them re-runs every package. go.mod and go.sum are always included.

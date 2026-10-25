@@ -57,7 +57,7 @@ s = open(p).read()
 s = re.sub(r"<!-- (?:test-battery|cotest):start -->.*?<!-- (?:test-battery|cotest):end -->", lambda m: snip, s, flags=re.S)
 open(p, "w").write(s)
 PY
-	echo "update  CLAUDE.md (test-battery block)"
+	echo "update  CLAUDE.md (cotest block)"
 else
 	{ [ -f "$DIR/CLAUDE.md" ] && echo; cat "$KIT/CLAUDE.snippet.md"; } >> "$DIR/CLAUDE.md"
 	echo "append  CLAUDE.md"
