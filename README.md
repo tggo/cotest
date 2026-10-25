@@ -29,7 +29,7 @@ The installer:
 |---|---|
 | `PostToolUse` on `Write\|Edit\|MultiEdit\|Bash` | starts a detached worker, returns in milliseconds |
 | worker | waits 2 s of quiet, hashes every package, tests only stale ones (one `go test -json` per level) |
-| `PreToolUse` | blocks direct `go test`/`go vet`, and writes to the battery's own files |
+| `PreToolUse` | blocks direct `go test`/`go vet`, and writes to cotest's own files |
 | `Stop` | every affected package green for the current files, and every changed line covered. Sends the agent back up to 3 times |
 
 The cache key of a package is a hash of its files plus its in-module dependencies (`go list -deps`
