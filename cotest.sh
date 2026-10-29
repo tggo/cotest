@@ -191,14 +191,34 @@ finalize() { # level run by pkg ok t0
 	log "$lvl" "$(rel "$p")${run:+ -run $run} ok=$([ "$ok" = true ] && echo yes || echo NO) by=$by ${secs}s"
 }
 
+# Runs are serialised across every cotest process of the project: parallel `go test` runs of the same
+# packages fight for CPU and the database. A lock left by a killed holder is taken over.
+lock_runs() { # by
+	local l="$S/run.lock" me pid; me=$(exec sh -c 'echo $PPID')
+	# The symlink target is the holder's pid, so taking the lock and naming the holder is one atomic step.
+	until ln -s "$me" "$l" 2>/dev/null; do
+		superseded "$1" && return 1
+		pid=$(readlink "$l" 2>/dev/null)
+		[ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null && rm -f "$l"
+		sleep 0.3
+	done
+	LOCK_PID=$me
+}
+unlock_runs() { [ -n "${LOCK_PID:-}" ] && [ "$(readlink "$S/run.lock" 2>/dev/null)" = "$LOCK_PID" ] && rm -f "$S/run.lock"; LOCK_PID=; }
+
 # Run one level for a set of packages. Tests go through ONE `go test -json` (go parallelises packages
 # itself and shares the build), and a splitter finalizes each package the moment its last event arrives,
 # so a fast package does not wait for a slow one. Coverage is collected so Stop can check changed lines.
 run_batch() { # level run by pkg…
-	local lvl=$1 run=$2 by=$3 p r t0 tmp; shift 3
+	local lvl=$1 run=$2 by=$3 p r t0 tmp todo=""; shift 3
 	[ $# = 0 ] && return
+	lock_runs "$by" || return
+	trap 'rm -rf "${tmp:-}"; unlock_runs' EXIT # a killed run must not leave its event dir in $TMPDIR
+	# Another process may have tested these packages while this one waited for the lock.
+	for p in "$@"; do [ "$(state_of "$lvl" "$p" "$run")" = fresh ] || todo+=" $p"; done
+	set -- $todo
+	[ $# = 0 ] && { unlock_runs; return; }
 	t0=$(date +%s); tmp=$(mktemp -d)
-	trap 'rm -rf "${tmp:-}"' EXIT # a killed run must not leave its event dir in $TMPDIR
 	for p in "$@"; do r=$(res "$lvl" "$p" "$run"); mkdir -p "$(dirname "$r")"; echo "$(scope_hash "$lvl" "$p") running - $by 0" > "$r.st"; done
 	if [ "$lvl" = lint ]; then
 		# vet per package, capped at COTEST_JOBS at a time
@@ -238,7 +258,7 @@ run_batch() { # level run by pkg…
 			mv "$f" "$r.events"
 			finalize "$lvl" "$run" "$by" "$p" "$([ "$action" = fail ] && echo false || echo true)" "$t0"
 		done
-		superseded "$by" && { rm -rf "$tmp"; return; }
+		superseded "$by" && { rm -rf "$tmp"; unlock_runs; return; }
 		for p in "$@"; do
 			r=$(res "$lvl" "$p" "$run")
 			# A package that never reported (setup failure) fails with go's stderr.
@@ -250,7 +270,7 @@ run_batch() { # level run by pkg…
 			[ -f "$tmp/cover" ] && awk -v p="$p/" 'NR==1 {print; next} index($0, p)==1 && substr($0, length(p)+1) !~ /\// {print}' "$tmp/cover" > "$r.cover"
 		done
 	fi
-	rm -rf "$tmp"
+	rm -rf "$tmp"; unlock_runs
 }
 
 # Changed lines (working tree vs the session base, see cover_base; non-test .go files, untracked included) that sit inside a
