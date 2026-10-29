@@ -198,6 +198,7 @@ run_batch() { # level run by pkg…
 	local lvl=$1 run=$2 by=$3 p r t0 tmp; shift 3
 	[ $# = 0 ] && return
 	t0=$(date +%s); tmp=$(mktemp -d)
+	trap 'rm -rf "${tmp:-}"' EXIT # a killed run must not leave its event dir in $TMPDIR
 	for p in "$@"; do r=$(res "$lvl" "$p" "$run"); mkdir -p "$(dirname "$r")"; echo "$(scope_hash "$lvl" "$p") running - $by 0" > "$r.st"; done
 	if [ "$lvl" = lint ]; then
 		# vet per package, capped at COTEST_JOBS at a time
@@ -223,8 +224,11 @@ run_batch() { # level run by pkg…
 				}
 				my $p = $e->{Package} or next;
 				(my $f = $p) =~ s/[^A-Za-z0-9]/_/g;
-				open my $fh, ">>", "$dir/$f" or die; print $fh $js->encode($e), "\n"; close $fh;
+				# One handle per package: an open/close per event floods fseventsd.
+				my $fh = $fh{$f} //= do { open my $h, ">>", "$dir/$f" or die; $h };
+				print $fh $js->encode($e), "\n";
 				if (!defined $e->{Test} && $e->{Action} =~ /^(pass|fail|skip)$/) {
+					close delete $fh{$f};
 					print join("\t", "DONE", $p, $e->{Action}, "$dir/$f"), "\n";
 				}
 			}' "$tmp" |
